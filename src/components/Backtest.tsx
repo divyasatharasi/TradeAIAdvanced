@@ -9,6 +9,7 @@ import {
   AlertCircle,
   Download,
   BarChart,
+  RefreshCw,
   PieChart as PieChartIcon
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -52,11 +53,31 @@ interface BacktestSummary {
 
 export const Backtest: React.FC<{ activeLegs: OptionLeg[] }> = ({ activeLegs }) => {
   const [isRunning, setIsRunning] = useState(false);
+  const [isIngesting, setIsIngesting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState<BacktestResult[] | null>(null);
   const [summary, setSummary] = useState<BacktestSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleIngest = async () => {
+    setIsIngesting(true);
+    setError(null);
+    try {
+      const res = await BacktestService.ingestData('^NSEI');
+      if (res.success) {
+        alert(`Successfully ingested ${res.count} records for NIFTY 50!`);
+      } else {
+        setError(res.error);
+      }
+    } catch (err) {
+      setError('Failed to ingest data. Check server logs.');
+    } finally {
+      setIsIngesting(false);
+    }
+  };
 
   const runBacktest = async () => {
+    setError(null);
     if (activeLegs.length === 0) return;
     
     setIsRunning(true);
@@ -114,8 +135,9 @@ export const Backtest: React.FC<{ activeLegs: OptionLeg[] }> = ({ activeLegs }) 
           avgLoss: totalLossAmount / (data.length - wins)
         });
       }
-    } catch (error) {
-      console.error('Backtest failed', error);
+    } catch (err: any) {
+      console.error('Backtest failed', err);
+      setError(err.message || 'Backtest failed. Make sure to ingest data first.');
     } finally {
       setIsRunning(false);
     }
@@ -139,6 +161,16 @@ export const Backtest: React.FC<{ activeLegs: OptionLeg[] }> = ({ activeLegs }) 
           <p className="text-slate-500 text-sm">Test your current strategy against historical market data (Last 5 Years)</p>
         </div>
         <div className="flex gap-3">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="gap-2"
+            onClick={handleIngest}
+            disabled={isIngesting}
+          >
+            <RefreshCw className={`h-4 w-4 ${isIngesting ? 'animate-spin' : ''}`} />
+            {isIngesting ? 'Ingesting...' : 'Ingest 10Y Data'}
+          </Button>
           <Button variant="outline" size="sm" className="gap-2">
             <Calendar className="h-4 w-4" />
             Select Range
@@ -153,6 +185,15 @@ export const Backtest: React.FC<{ activeLegs: OptionLeg[] }> = ({ activeLegs }) 
           </Button>
         </div>
       </div>
+
+      {error && (
+        <Card className="bg-red-50 border-red-200">
+          <CardContent className="p-4 flex items-center gap-3 text-red-800">
+            <AlertCircle className="h-5 w-5" />
+            <p className="text-sm font-medium">{error}</p>
+          </CardContent>
+        </Card>
+      )}
 
       {activeLegs.length === 0 && (
         <Card className="bg-amber-50 border-amber-200">
