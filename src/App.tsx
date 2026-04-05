@@ -26,7 +26,8 @@ import {
   BarChart3,
   Layers,
   Zap,
-  Target
+  Target,
+  History
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -45,6 +46,7 @@ import { StrategyPanel } from './components/StrategyPanel';
 import { OptionChain } from './components/OptionChain';
 import { GreeksChart } from './components/GreeksChart';
 import { Portfolio } from './components/Portfolio';
+import { Backtest } from './components/Backtest';
 import { OnboardingTour, TourStep } from './components/OnboardingTour';
 
 export default function App() {
@@ -267,6 +269,12 @@ function AppContent() {
       title: 'My Portfolio',
       content: 'Save your favorite strategies and track them over time in your personal portfolio.',
       position: 'bottom'
+    },
+    {
+      target: 'backtest-button',
+      title: 'Historical Backtesting',
+      content: 'Test your strategy against 5+ years of historical data to see how it would have performed.',
+      position: 'bottom'
     }
   ];
 
@@ -307,6 +315,16 @@ function AppContent() {
                 <TrendingUp className="h-4 w-4" />
                 Portfolio ({savedStrategies.length})
               </Button>
+              <Button 
+                id="backtest-button"
+                variant={location.pathname === '/backtest' ? "default" : "ghost"} 
+                size="sm" 
+                className="gap-2"
+                onClick={() => navigate('/backtest')}
+              >
+                <History className="h-4 w-4" />
+                Backtest
+              </Button>
               <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-full border border-slate-200">
                 <Search className="h-4 w-4 text-slate-400" />
                 <input 
@@ -343,6 +361,11 @@ function AppContent() {
                   onDelete={deleteSavedStrategy} 
                   onLoad={loadSavedStrategy} 
                 />
+              </div>
+            } />
+            <Route path="/backtest" element={
+              <div className="space-y-6">
+                <Backtest activeLegs={legs} />
               </div>
             } />
             <Route path="/" element={
