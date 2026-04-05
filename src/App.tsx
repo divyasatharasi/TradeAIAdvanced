@@ -38,9 +38,19 @@ import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogDescription, 
+  DialogFooter,
+  DialogClose
+} from '@/components/ui/dialog';
 import { OptionLeg, Strategy, OptionChainItem, SavedStrategy } from './types';
 import { generatePayoffData, calculateStrategyGreeks, calculatePayoff, estimateMargin, calculatePOP, getDaysToExpiry, generateGreeksData } from './lib/options';
 import { generateMockOptionChain, INSTRUMENTS, STRATEGY_PRESETS, getExpiriesForInstrument } from './lib/mockData';
+import { optionService } from './services/optionService';
 import { PayoffChart } from './components/PayoffChart';
 import { StrategyPanel } from './components/StrategyPanel';
 import { OptionChain } from './components/OptionChain';
@@ -62,13 +72,20 @@ function AppContent() {
   const location = useLocation();
   
   const [selectedInstrument, setSelectedInstrument] = useState(INSTRUMENTS[0]);
-  const [availableExpiries, setAvailableExpiries] = useState<string[]>(getExpiriesForInstrument(INSTRUMENTS[0]));
-  const [selectedExpiry, setSelectedExpiry] = useState(availableExpiries[0]);
+  const [availableExpiries, setAvailableExpiries] = useState<string[]>([]);
+  const [selectedExpiry, setSelectedExpiry] = useState('');
   const [legs, setLegs] = useState<OptionLeg[]>([]);
   const [spotPrice, setSpotPrice] = useState(selectedInstrument.spot);
   const [activeChartTab, setActiveChartTab] = useState<'payoff' | 'greeks'>('payoff');
   const [savedStrategies, setSavedStrategies] = useState<SavedStrategy[]>([]);
   const [showTour, setShowTour] = useState(false);
+  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [strategyName, setStrategyName] = useState('');
+  
+  const [optionChainData, setOptionChainData] = useState<OptionChainItem[]>([]);
+  const [isLoadingChain, setIsLoadingChain] = useState(false);
+  const [chainError, setChainError] = useState<string | null>(null);
+  const [isMockMode, setIsMockMode] = useState(false);
 
   // Load saved strategies and check for tour on mount
   useEffect(() => {
@@ -92,13 +109,79 @@ function AppContent() {
     localStorage.setItem('optionwise_strategies', JSON.stringify(savedStrategies));
   }, [savedStrategies]);
 
-  // Update expiries and spot price when instrument changes
+  // Fetch option chain when instrument or expiry changes
   useEffect(() => {
-    const expiries = getExpiriesForInstrument(selectedInstrument);
-    setAvailableExpiries(expiries);
-    setSelectedExpiry(expiries[0]);
-    setSpotPrice(selectedInstrument.spot);
-    // Clear legs when instrument changes to avoid confusion
+    const fetchChain = async () => {
+      setIsLoadingChain(true);
+      setChainError(null);
+
+      if (isMockMode) {
+        setOptionChainData(generateMockOptionChain(selectedInstrument.spot, selectedInstrument.step));
+        setSpotPrice(selectedInstrument.spot);
+        if (availableExpiries.length === 0) {
+          const mockExpiries = getExpiriesForInstrument(selectedInstrument);
+          setAvailableExpiries(mockExpiries);
+          setSelectedExpiry(mockExpiries[0]);
+        }
+        setIsLoadingChain(false);
+        return;
+      }
+
+      try {
+        const response = await optionService.getOptionChain(selectedInstrument.symbol, selectedExpiry);
+        setOptionChainData(response.chain);
+        setSpotPrice(response.underlyingPrice);
+        
+        // Update expiries if they've changed or if we don't have any yet
+        if (response.expiries.length > 0 && availableExpiries.length === 0) {
+          setAvailableExpiries(response.expiries);
+          if (!selectedExpiry) {
+            setSelectedExpiry(response.expiries[0]);
+          }
+        }
+      } catch (err: any) {
+        console.error('Failed to fetch chain:', err);
+        const errorMsg = err.message || 'Failed to load real-time data';
+        setChainError(`${errorMsg}. Falling back to mock data.`);
+        // Fallback to mock data
+        setOptionChainData(generateMockOptionChain(selectedInstrument.spot, selectedInstrument.step));
+        setSpotPrice(selectedInstrument.spot);
+        if (availableExpiries.length === 0) {
+          const mockExpiries = getExpiriesForInstrument(selectedInstrument);
+          setAvailableExpiries(mockExpiries);
+          setSelectedExpiry(mockExpiries[0]);
+        }
+      } finally {
+        setIsLoadingChain(false);
+      }
+    };
+
+    fetchChain();
+  }, [selectedInstrument, selectedExpiry, isMockMode]);
+
+  // Real-time spot price polling
+  useEffect(() => {
+    if (isMockMode) return;
+
+    const pollPrice = async () => {
+      try {
+        const quote = await optionService.getQuote(selectedInstrument.symbol);
+        if (quote.price > 0) {
+          setSpotPrice(quote.price);
+        }
+      } catch (err) {
+        console.error('Failed to poll spot price:', err);
+      }
+    };
+
+    const interval = setInterval(pollPrice, 10000); // Poll every 10 seconds
+    return () => clearInterval(interval);
+  }, [selectedInstrument]);
+
+  // Reset expiries when instrument changes so they can be re-fetched
+  useEffect(() => {
+    setAvailableExpiries([]);
+    setSelectedExpiry('');
     setLegs([]);
   }, [selectedInstrument]);
 
@@ -114,17 +197,14 @@ function AppContent() {
     setLegs(newLegs);
   };
 
-  const optionChainData = useMemo(() => {
-    return generateMockOptionChain(selectedInstrument.spot, selectedInstrument.step);
-  }, [selectedInstrument]);
-
   const payoffData = useMemo(() => {
     return generatePayoffData(legs, spotPrice);
   }, [legs, spotPrice]);
 
   const greeksData = useMemo(() => {
-    return generateGreeksData(legs, spotPrice);
-  }, [legs, spotPrice]);
+    const daysToExpiry = getDaysToExpiry(selectedExpiry);
+    return generateGreeksData(legs, spotPrice, daysToExpiry);
+  }, [legs, spotPrice, selectedExpiry]);
 
   const greeks = useMemo(() => {
     const daysToExpiry = getDaysToExpiry(selectedExpiry);
@@ -193,9 +273,14 @@ function AppContent() {
 
   const saveStrategy = () => {
     if (legs.length === 0) return;
+    setStrategyName(`Strategy ${savedStrategies.length + 1}`);
+    setIsSaveDialogOpen(true);
+  };
+
+  const confirmSave = () => {
     const newStrategy: SavedStrategy = {
       id: Math.random().toString(36).substr(2, 9),
-      name: `Strategy ${savedStrategies.length + 1}`,
+      name: strategyName || `Strategy ${savedStrategies.length + 1}`,
       instrument: selectedInstrument.name,
       expiry: selectedExpiry,
       legs: [...legs],
@@ -203,6 +288,7 @@ function AppContent() {
       createdAt: new Date().toISOString(),
     };
     setSavedStrategies([newStrategy, ...savedStrategies]);
+    setIsSaveDialogOpen(false);
     navigate('/portfolio');
   };
 
@@ -293,6 +379,51 @@ function AppContent() {
             onSkip={completeTour} 
           />
         )}
+
+        {/* Save Strategy Confirmation Dialog */}
+        <Dialog open={isSaveDialogOpen} onOpenChange={setIsSaveDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Save Strategy</DialogTitle>
+              <DialogDescription>
+                Give your strategy a name to easily identify it in your portfolio.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <label htmlFor="name" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                  Strategy Name
+                </label>
+                <input
+                  id="name"
+                  className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  placeholder="e.g., Bull Call Spread"
+                  value={strategyName}
+                  onChange={(e) => setStrategyName(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Strategy Details</p>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-600">{selectedInstrument.name} ({selectedExpiry})</span>
+                  <Badge variant="secondary">{legs.length} Legs</Badge>
+                </div>
+              </div>
+            </div>
+            <DialogFooter className="sm:justify-end gap-2">
+              <DialogClose asChild>
+                <Button type="button" variant="ghost">
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="button" onClick={confirmSave} className="bg-blue-600 hover:bg-blue-700">
+                Save to Portfolio
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Header */}
         <header className="sticky top-0 z-50 w-full border-b bg-white/80 backdrop-blur-md">
           <div className="container mx-auto px-4 h-16 flex items-center justify-between">
@@ -305,6 +436,15 @@ function AppContent() {
             </div>
 
             <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg border border-slate-200">
+                <span className="text-[10px] font-bold uppercase text-slate-500">Mock Mode</span>
+                <button 
+                  onClick={() => setIsMockMode(!isMockMode)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${isMockMode ? 'bg-blue-600' : 'bg-slate-300'}`}
+                >
+                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${isMockMode ? 'translate-x-5' : 'translate-x-1'}`} />
+                </button>
+              </div>
               <Button 
                 id="portfolio-button"
                 variant={location.pathname === '/portfolio' ? "default" : "ghost"} 
@@ -426,7 +566,9 @@ function AppContent() {
                   <Card className="md:col-span-1 shadow-sm border-slate-200 bg-blue-50/50 border-blue-100">
                     <CardContent className="p-4 flex items-center justify-between h-full">
                       <div>
-                        <label className="text-xs font-semibold text-blue-600 uppercase mb-1 block">Current Spot</label>
+                        <label className="text-xs font-semibold text-blue-600 uppercase mb-1 block">
+                          {isMockMode ? 'Simulated Spot' : 'Current Spot'}
+                        </label>
                         <div className="flex items-baseline gap-2">
                           <span className="text-2xl font-bold tracking-tight">₹{spotPrice.toLocaleString()}</span>
                           <span className="text-sm font-medium text-green-600 flex items-center gap-0.5">
@@ -498,14 +640,39 @@ function AppContent() {
                           </CardTitle>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <Info className="h-4 w-4" />
-                            <span>LTP updated real-time</span>
+                            <span>{isMockMode ? 'LTP simulated' : 'LTP updated real-time'}</span>
                           </div>
                         </div>
                       </CardHeader>
                       <CardContent className="p-0">
-                        <ScrollArea className="h-[500px]">
-                          <OptionChain data={optionChainData} spotPrice={spotPrice} onAddLeg={addLeg} />
-                        </ScrollArea>
+                        {isLoadingChain ? (
+                          <div className="flex flex-col items-center justify-center py-20 gap-4">
+                            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+                            <p className="text-sm text-slate-500 font-medium">{isMockMode ? 'Generating mock option chain...' : 'Fetching real-time option chain...'}</p>
+                          </div>
+                        ) : (
+                          <>
+                            {isMockMode && (
+                              <div className="bg-blue-50 border-y border-blue-100 px-4 py-2 flex items-center gap-2 text-blue-700 text-xs font-medium">
+                                <Info className="h-3.5 w-3.5" />
+                                Mock Mode Active: Using simulated option chain data for development.
+                              </div>
+                            )}
+                            {chainError && !isMockMode && (
+                              <div className="bg-amber-50 border-y border-amber-100 px-4 py-2 flex items-center gap-2 text-amber-700 text-xs font-medium">
+                                <Info className="h-3.5 w-3.5" />
+                                {chainError}
+                              </div>
+                            )}
+                            <ScrollArea className="h-[500px]">
+                              <OptionChain 
+                                data={optionChainData} 
+                                spotPrice={spotPrice} 
+                                onAddLeg={addLeg} 
+                              />
+                            </ScrollArea>
+                          </>
+                        )}
                       </CardContent>
                     </Card>
                   </div>
@@ -524,7 +691,13 @@ function AppContent() {
                         </Button>
                       </CardHeader>
                       <CardContent>
-                        <StrategyPanel legs={legs} onRemoveLeg={removeLeg} onUpdateLeg={updateLeg} />
+                        <StrategyPanel 
+                          legs={legs} 
+                          spotPrice={spotPrice}
+                          daysToExpiry={getDaysToExpiry(selectedExpiry)}
+                          onRemoveLeg={removeLeg} 
+                          onUpdateLeg={updateLeg} 
+                        />
                       </CardContent>
                     </Card>
 

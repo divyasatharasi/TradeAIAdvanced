@@ -3,6 +3,7 @@ import { format, addDays, startOfMonth, endOfMonth, eachDayOfInterval, isTuesday
 
 export interface Instrument {
   name: string;
+  symbol: string; // Yahoo Finance symbol
   spot: number;
   step: number;
   lotSize: number;
@@ -10,12 +11,12 @@ export interface Instrument {
 }
 
 export const INSTRUMENTS: Instrument[] = [
-  { name: 'NIFTY', spot: 22713.10, step: 50, lotSize: 50, type: 'INDEX' },
-  { name: 'BANKNIFTY', spot: 48120.50, step: 100, lotSize: 15, type: 'INDEX' },
-  { name: 'FINNIFTY', spot: 21340.20, step: 50, lotSize: 40, type: 'INDEX' },
-  { name: 'MIDCPNIFTY', spot: 10840.50, step: 25, lotSize: 75, type: 'INDEX' },
-  { name: 'RELIANCE', spot: 2940.15, step: 20, lotSize: 250, type: 'STOCK' },
-  { name: 'TCS', spot: 3980.40, step: 20, lotSize: 175, type: 'STOCK' },
+  { name: 'NIFTY', symbol: '^NSEI', spot: 22713.10, step: 50, lotSize: 50, type: 'INDEX' },
+  { name: 'BANKNIFTY', symbol: '^NSEBANK', spot: 48120.50, step: 100, lotSize: 15, type: 'INDEX' },
+  { name: 'FINNIFTY', symbol: 'NIFTY_FIN_SERVICE.NS', spot: 21340.20, step: 50, lotSize: 40, type: 'INDEX' },
+  { name: 'MIDCPNIFTY', symbol: '^NSEMDCP50', spot: 10840.50, step: 25, lotSize: 75, type: 'INDEX' },
+  { name: 'RELIANCE', symbol: 'RELIANCE.NS', spot: 2940.15, step: 20, lotSize: 250, type: 'STOCK' },
+  { name: 'TCS', symbol: 'TCS.NS', spot: 3980.40, step: 20, lotSize: 175, type: 'STOCK' },
 ];
 
 // NSE Holidays 2026 (Partial list for demo months)

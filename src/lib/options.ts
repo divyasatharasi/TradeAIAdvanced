@@ -93,16 +93,19 @@ export const calculatePayoff = (legs: OptionLeg[], spotAtExpiry: number): number
 /**
  * Calculates the current P&L (T+0) for a strategy
  */
-export const calculateCurrentPnL = (legs: OptionLeg[], currentSpot: number, daysToExpiry: number = 7): number => {
+export const calculateLegPnL = (leg: OptionLeg, currentSpot: number, daysToExpiry: number = 7): number => {
   const r = 0.07; // Risk-free rate (7%)
   const v = 0.18; // Volatility (18%)
   const T = daysToExpiry / 365;
 
+  const optionValue = blackScholes(currentSpot, leg.strike, T, r, v, leg.type);
+  const multiplier = leg.side === 'BUY' ? 1 : -1;
+  return (optionValue - leg.premium) * leg.quantity * leg.lotSize * multiplier;
+};
+
+export const calculateCurrentPnL = (legs: OptionLeg[], currentSpot: number, daysToExpiry: number = 7): number => {
   return legs.reduce((total, leg) => {
-    const optionValue = blackScholes(currentSpot, leg.strike, T, r, v, leg.type);
-    const multiplier = leg.side === 'BUY' ? 1 : -1;
-    const netPnL = (optionValue - leg.premium) * leg.quantity * leg.lotSize * multiplier;
-    return total + netPnL;
+    return total + calculateLegPnL(leg, currentSpot, daysToExpiry);
   }, 0);
 };
 
@@ -125,13 +128,11 @@ export const generatePayoffData = (legs: OptionLeg[], currentSpot: number, range
   return data;
 };
 
-export const generateGreeksData = (legs: OptionLeg[], currentSpot: number, rangePercent: number = 0.15): any[] => {
+export const generateGreeksData = (legs: OptionLeg[], currentSpot: number, daysToExpiry: number = 7, rangePercent: number = 0.15): any[] => {
   const data: any[] = [];
   const minPrice = currentSpot * (1 - rangePercent);
   const maxPrice = currentSpot * (1 + rangePercent);
   const step = (maxPrice - minPrice) / 100;
-
-  const daysToExpiry = legs.length > 0 ? getDaysToExpiry(legs[0].expiry) : 7;
 
   for (let price = minPrice; price <= maxPrice; price += step) {
     const greeks = calculateStrategyGreeks(legs, price, daysToExpiry);
@@ -241,4 +242,37 @@ export const estimateMargin = (legs: OptionLeg[], spotPrice: number): number => 
   });
 
   return Math.round(totalMargin);
+};
+
+/**
+ * Calculates a summary of the strategy's max profit, max loss, and net credit/debit.
+ */
+export const calculateStrategySummary = (legs: OptionLeg[], currentSpot: number) => {
+  if (legs.length === 0) return { maxProfit: 0, maxLoss: 0, netCreditDebit: 0 };
+
+  const strikes = legs.map(l => l.strike);
+  // Test at 0, each strike, and some points around current spot
+  const testPoints = [0, ...strikes, currentSpot * 0.5, currentSpot * 1.5, currentSpot * 2];
+  const profits = testPoints.map(p => calculatePayoff(legs, p));
+  
+  let maxProfit = Math.max(...profits);
+  let maxLoss = Math.min(...profits);
+  
+  // Check for unlimited profit/loss by testing a very high price
+  const veryHighPrice = currentSpot * 10;
+  const veryHighProfit = calculatePayoff(legs, veryHighPrice);
+  
+  if (veryHighProfit > maxProfit + 10000) maxProfit = Infinity;
+  if (veryHighProfit < maxLoss - 10000) maxLoss = -Infinity;
+
+  const netCreditDebit = legs.reduce((total, leg) => {
+    const multiplier = leg.side === 'SELL' ? 1 : -1;
+    return total + (leg.premium * leg.quantity * leg.lotSize * multiplier);
+  }, 0);
+
+  return {
+    maxProfit,
+    maxLoss,
+    netCreditDebit
+  };
 };
