@@ -125,6 +125,24 @@ export const generatePayoffData = (legs: OptionLeg[], currentSpot: number, range
   return data;
 };
 
+export const generateGreeksData = (legs: OptionLeg[], currentSpot: number, rangePercent: number = 0.15): any[] => {
+  const data: any[] = [];
+  const minPrice = currentSpot * (1 - rangePercent);
+  const maxPrice = currentSpot * (1 + rangePercent);
+  const step = (maxPrice - minPrice) / 100;
+
+  const daysToExpiry = legs.length > 0 ? getDaysToExpiry(legs[0].expiry) : 7;
+
+  for (let price = minPrice; price <= maxPrice; price += step) {
+    const greeks = calculateStrategyGreeks(legs, price, daysToExpiry);
+    data.push({
+      price: Math.round(price * 100) / 100,
+      ...greeks
+    });
+  }
+  return data;
+};
+
 /**
  * Estimates Probability of Profit (POP)
  */
@@ -182,7 +200,7 @@ export const calculateStrategyGreeks = (legs: OptionLeg[], spotPrice: number, da
 
 /**
  * Estimates the margin required for the strategy.
- * This is a simplified model based on standard exchange rules (SPAN + Exposure).
+ * This is a more realistic model based on standard exchange rules (SPAN + Exposure).
  */
 export const estimateMargin = (legs: OptionLeg[], spotPrice: number): number => {
   if (legs.length === 0) return 0;
@@ -197,27 +215,29 @@ export const estimateMargin = (legs: OptionLeg[], spotPrice: number): number => 
   });
 
   // 2. Selling options: Requires significant margin
-  // Base margin for naked selling is roughly 12-15% of contract value
-  const NAKED_MARGIN_PERCENT = 0.12; 
+  // Base margin for naked selling is roughly 12-15% of contract value (SPAN)
+  // Plus exposure margin (roughly 2-3%)
+  const SPAN_PERCENT = 0.12; 
+  const EXPOSURE_PERCENT = 0.03;
   
   sellLegs.forEach(sellLeg => {
     const contractValue = spotPrice * sellLeg.lotSize * sellLeg.quantity;
-    let marginForThisLeg = contractValue * NAKED_MARGIN_PERCENT;
+    let spanMargin = contractValue * SPAN_PERCENT;
+    let exposureMargin = contractValue * EXPOSURE_PERCENT;
 
     // Hedge Benefit: Check if this sell leg is hedged by a buy leg of the same type
+    // A spread significantly reduces SPAN margin
     const hedge = buyLegs.find(buyLeg => buyLeg.type === sellLeg.type);
     
     if (hedge) {
-      // If hedged (Spread), margin is significantly reduced
-      // Typically reduced to a fixed amount + spread width
       const spreadWidth = Math.abs(sellLeg.strike - hedge.strike);
-      const spreadMargin = (spreadWidth * sellLeg.lotSize * sellLeg.quantity) + (25000 * sellLeg.quantity);
-      
-      // Use the lower of naked margin or spread margin
-      marginForThisLeg = Math.min(marginForThisLeg, spreadMargin);
+      const spreadMargin = (spreadWidth * sellLeg.lotSize * sellLeg.quantity) + (15000 * sellLeg.quantity);
+      spanMargin = Math.min(spanMargin, spreadMargin);
+      // Exposure margin is also reduced for spreads
+      exposureMargin = exposureMargin * 0.5;
     }
 
-    totalMargin += marginForThisLeg;
+    totalMargin += (spanMargin + exposureMargin);
   });
 
   return Math.round(totalMargin);
